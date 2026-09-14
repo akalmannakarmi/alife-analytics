@@ -22,9 +22,11 @@ Two pieces, no build step:
 python3 extract.py
 ```
 
-Default input: `../runtime/saves` and
-`../alife-data-collector/runtime-collector` (both relative to this repo).
-Output: `analytics/` in the current directory.
+Default input: with `ALIFE_DIR` set, `$ALIFE_DIR/saves` + `$ALIFE_DIR/collector`;
+otherwise the legacy script-relative `../runtime/saves` and
+`../alife-data-collector/runtime-collector`. From the workspace, `./dev`
+exports `ALIFE_DIR=runtime/`, so the defaults are `runtime/saves` +
+`runtime/collector`. Output: `analytics/` in the current directory.
 
 ```sh
 python3 extract.py --saves ../other/saves --out /tmp/out
@@ -33,6 +35,25 @@ python3 extract.py --saves ../other/saves --out /tmp/out
 - `--saves <dir>` — repeatable; every directory tree is walked and any dir
   containing `manifest.json` is treated as a world.
 - `--out <dir>` — default `analytics`.
+- `--no-cache` — ignore the extraction cache and re-extract every world (the
+  cache is still refreshed).
+
+### Extraction cache
+
+Extraction caches per-world results in a sidecar `.extract-cache.json` inside
+`<out_dir>`. Each entry maps the absolute world dir to a fingerprint of the
+four files extraction reads (`manifest.json`, `settings.json`, `stats.bin`,
+`actions.bin` — size + mtime) plus the emitted metadata. The fingerprint is
+salted with extract.py's own mtime and a `cache_format` version, so changing
+the code automatically invalidates old entries. On later runs an unchanged
+world skips parsing entirely — only `index.json` is rewritten (metadata is
+cheap); `worlds/<id>.json` files are left untouched. Only worlds whose
+fingerprint changed are re-extracted, and cache entries for vanished world
+dirs are pruned. The counts line reports both numbers:
+
+```sh
+extract: 12 worlds (1 re-extracted, 11 cached)
+```
 
 A world is emitted only if it has `stats.bin`. Save dirs with only
 `manifest.json` (logging disabled) are listed in the index with a
@@ -56,8 +77,9 @@ data lives somewhere else, override with a `data` query param:
 ## Experiment runner
 
 `experiment.py` runs one-shot experiments: a matrix of brains x presets x seeds,
-each spawning the real headless `alife` binary into its own save dir under
-`../runtime/saves/<experiment>/`, then extracts and serves the dashboard over
+each spawning the real headless `alife` binary into its own save dir under the
+save root (with `ALIFE_DIR` set: `$ALIFE_DIR/saves/<experiment>/`; else
+`../runtime/saves/<experiment>/`), then extracts and serves the dashboard over
 the results. Stdlib only; drives the real CLI flags (`--output-dir`,
 `--brain-kind`, `--cfg`, `--llm-*`, `--nn-path`, `--checkpoint-every`) — no
 invented flags.
@@ -66,7 +88,7 @@ invented flags.
 python3 experiment.py run cfg.json            # run the matrix (parallel, capped)
 python3 experiment.py run cfg.json --dry-run  # print the constructed argv, spawn nothing
 python3 experiment.py chart <exp-dir>         # extract + serve the dashboard (port 8765)
-python3 experiment.py list                    # list save dirs under ../runtime/saves
+python3 experiment.py list                    # list save dirs under the save root
 python3 experiment.py clean <name> --yes      # remove an experiment's save dir
 ```
 
@@ -98,7 +120,8 @@ completed run (the world is still saved). Run lifecycle:
 ```
 
 - Run dirs: `<save-root>/<name>/<brain>-<preset>-s<seed>`. Save root defaults
-  to `../runtime/saves` (the extract default); override with `--saves-dir <dir>`.
+  to `$ALIFE_DIR/saves` when `ALIFE_DIR` is set, else `../runtime/saves`;
+  override with `--saves-dir <dir>`.
 - Preset `cfg` entries become repeatable `--cfg field=val` args — the whitelisted
   conf fields (movement cost / placement / emission + creation values).
 - Relative `nn_path` resolves against the config file's directory; absolute

@@ -37,6 +37,15 @@ DEFAULT_BINARY = "../alife/zig-out/bin/alife"
 DEFAULT_SAVES = "../runtime/saves"
 DEFAULT_PORT = 8765
 
+
+def default_saves_dir() -> Path:
+    """Save root: ALIFE_DIR/saves when set (workspace runtime), else the
+    legacy script-relative path. Overridable via --saves-dir."""
+    alife_dir = os.environ.get("ALIFE_DIR")
+    if alife_dir:
+        return Path(alife_dir) / "saves"
+    return Path(DEFAULT_SAVES)
+
 KINDS = ("random", "neural_net", "llm")
 
 # Exit codes: 0 = all runs ok, 1 = one or more runs failed (or config error),
@@ -377,7 +386,7 @@ def cmd_run(cfg_path: str, dry_run: bool, max_parallel: int | None,
         return RC_FAILED
 
     cfg_file_dir = Path(cfg_path).resolve().parent
-    saves_base = Path(saves_dir) if saves_dir else Path(DEFAULT_SAVES)
+    saves_base = Path(saves_dir) if saves_dir else default_saves_dir()
     if not saves_base.is_absolute():
         saves_base = Path.cwd() / saves_base
     bin_path = binary or cfg.get("alife_binary", DEFAULT_BINARY)
@@ -459,7 +468,7 @@ def cmd_chart(exp_dir_arg: str | None, port: int, out: str) -> int:
 
 
 def cmd_list(saves_dir: str | None) -> int:
-    saves_base = Path(saves_dir) if saves_dir else Path(DEFAULT_SAVES)
+    saves_base = Path(saves_dir) if saves_dir else default_saves_dir()
     if not saves_base.is_absolute():
         saves_base = Path.cwd() / saves_base
     if not saves_base.is_dir():
@@ -486,7 +495,7 @@ def cmd_list(saves_dir: str | None) -> int:
 
 
 def cmd_clean(name: str, saves_dir: str | None, yes: bool, dry: bool) -> int:
-    saves_base = Path(saves_dir) if saves_dir else Path(DEFAULT_SAVES)
+    saves_base = Path(saves_dir) if saves_dir else default_saves_dir()
     if not saves_base.is_absolute():
         saves_base = Path.cwd() / saves_base
     target = saves_base / name
@@ -525,7 +534,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--max-parallel", type=int, default=None,
                        help="override config max_parallel")
     run_p.add_argument("--saves-dir", default=None,
-                       help="override the save root (default: ../runtime/saves)")
+                       help="override the save root (default: ALIFE_DIR/saves if set, else ../runtime/saves)")
     run_p.add_argument("--binary", default=None,
                        help="override the alife binary path")
 

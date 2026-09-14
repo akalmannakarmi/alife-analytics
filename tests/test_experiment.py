@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import experiment
 from experiment import (
+    DEFAULT_SAVES,
     RC_FAILED,
     RC_INTERRUPTED,
     RC_OK,
@@ -23,6 +24,7 @@ from experiment import (
     cmd_clean,
     cmd_list,
     cmd_run,
+    default_saves_dir,
     expand_matrix,
     load_config,
     main,
@@ -417,6 +419,48 @@ class ExperimentCliTests(unittest.TestCase):
         return got, False
 
     # -- cli dispatch ---------------------------------------------------------
+
+    # -- default saves root (ALIFE_DIR-aware) ----------------------------------
+
+    def test_default_saves_dir_uses_alife_dir(self):
+        with mock.patch.dict(os.environ, {"ALIFE_DIR": "/rt"}, clear=True):
+            self.assertEqual(default_saves_dir(), Path("/rt") / "saves")
+
+    def test_default_saves_dir_legacy_when_alife_unset(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(default_saves_dir(), Path(DEFAULT_SAVES))
+
+    def test_cmd_list_uses_alife_dir_default(self):
+        with mock.patch.dict(os.environ, {"ALIFE_DIR": self._tmp}, clear=True):
+            self._make_world(os.path.join(self._tmp, "saves"), "w")
+            with contextlib.redirect_stdout(io.StringIO()) as buf:
+                rc = cmd_list(saves_dir=None)
+        self.assertEqual(rc, RC_OK)
+        self.assertIn("w/", buf.getvalue())
+
+    def test_cmd_clean_uses_alife_dir_default(self):
+        with mock.patch.dict(os.environ, {"ALIFE_DIR": self._tmp}, clear=True):
+            self._make_world(os.path.join(self._tmp, "saves"), "gone")
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = cmd_clean("gone", saves_dir=None, yes=True, dry=False)
+        self.assertEqual(rc, RC_OK)
+        self.assertFalse(os.path.exists(os.path.join(self._tmp, "saves", "gone")))
+
+    def test_cmd_run_saves_under_alife_dir_default(self):
+        path = make_cfg(self._tmp)
+
+        def maker(cmd, stdout=None, stderr=None, env=None, **kw):
+            return FakeProc(cmd, rc=0)
+
+        with mock.patch.dict(os.environ, {"ALIFE_DIR": self._tmp}, clear=True):
+            with mock.patch.object(experiment, "Runner") as runner_cls:
+                runner_cls.return_value.run = lambda specs, cfd: self._fake_run(specs, maker)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rc = cmd_run(path, dry_run=False, max_parallel=None,
+                                 saves_dir=None, binary=None)
+        self.assertEqual(rc, RC_OK)
+        report = json.loads(Path(self._tmp, "saves", "exp", "report.json").read_text())
+        self.assertEqual(report["summary"]["ok"], 1)
 
     def test_main_dispatch(self):
         missing = os.path.join(self._tmp, "nope")

@@ -6,7 +6,9 @@ import shutil
 import struct
 import sys
 import tempfile
+import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -38,6 +40,34 @@ def run_extract(saves, out):
     args += ["--out", out]
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         extract.main(args)
+
+
+def run_extract_stdout(saves, out, extra=None):
+    args = []
+    for s in (saves if isinstance(saves, list) else [saves]):
+        args += ["--saves", s]
+    args += ["--out", out]
+    if extra:
+        args += extra
+    buf = io.StringIO()
+    err = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+        extract.main(args)
+    return buf.getvalue(), err.getvalue()
+
+
+def run_extract_defaults(out, alife_dir=None, script_file=None):
+    """Extract with no --saves, optionally under a fake ALIFE_DIR and/or a
+    relocated extract.py (script-dir resolves the legacy defaults)."""
+    args = ["--out", out]
+    env = {"ALIFE_DIR": alife_dir} if alife_dir is not None else {}
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        with mock.patch.dict(os.environ, env, clear=True):
+            if script_file is not None:
+                with mock.patch.object(extract, "__file__", script_file):
+                    extract.main(args)
+            else:
+                extract.main(args)
 
 
 class ExtractTests(unittest.TestCase):
@@ -257,6 +287,39 @@ class ExtractTests(unittest.TestCase):
         self.assertEqual(w["name"], "brain-server deepseekFree")
         self.assertEqual(w["id"], "brain-server_deepseekFree")
 
+    def test_default_roots_use_alife_dir_when_set(self):
+        alife_dir = os.path.join(self._tmp, "rt")
+        self.make_world(os.path.join(alife_dir, "saves"), "got", {
+            "manifest.json": json.dumps({"version": 5, "tick_count": 1, "confs": {}}),
+            "stats.bin": stats_bin([(0, 2, 1, 1, 1, 1, 0, 0)]),
+        })
+        self.make_world(os.path.join(alife_dir, "collector", "brain-a", "output"), "output", {
+            "manifest.json": json.dumps({"version": 5, "tick_count": 1, "confs": {}}),
+            "stats.bin": stats_bin([(0, 2, 1, 1, 1, 1, 0, 0)]),
+        })
+        run_extract_defaults(self.out_dir(), alife_dir=alife_dir)
+        targets = self.load_index()["worlds"]
+        gens = {(w["source"], w["name"]) for w in targets}
+        self.assertIn((os.path.join(alife_dir, "saves"), "got"), gens)
+        self.assertIn((os.path.join(alife_dir, "collector"), "brain-a"), gens)
+        file_count = sum(1 for w in targets if w["file"])
+        self.assertEqual(file_count, 2)
+
+    def test_default_roots_legacy_when_alife_unset(self):
+        script_dir = os.path.join(self._tmp, "analytics")
+        os.makedirs(script_dir, exist_ok=True)
+        self.make_world(os.path.join(self._tmp, "runtime", "saves"), "w", {
+            "manifest.json": json.dumps({"version": 5, "tick_count": 1, "confs": {}}),
+            "stats.bin": stats_bin([(0, 2, 1, 1, 1, 1, 0, 0)]),
+        })
+        self.make_world(os.path.join(self._tmp, "alife-data-collector", "runtime-collector", "brain-b"), "output", {
+            "manifest.json": json.dumps({"version": 5, "tick_count": 1, "confs": {}}),
+            "stats.bin": stats_bin([(0, 2, 1, 1, 1, 1, 0, 0)]),
+        })
+        fake_extract = os.path.join(script_dir, "extract.py")
+        run_extract_defaults(self.out_dir(), script_file=fake_extract)
+        self.assertEqual(self.load_index()["count"], 2)
+
     def test_obs_bin_never_touched(self):
         saves = os.path.join(self._tmp, "saves")
         os.makedirs(saves)
@@ -267,6 +330,156 @@ class ExtractTests(unittest.TestCase):
         })
         run_extract(saves, self.out_dir())
         self.assertEqual(self.load_index()["count"], 1)
+
+    def cache_path(self):
+        return os.path.join(self.out_dir(), ".extract-cache.json")
+
+    def load_cache_json(self):
+        with open(self.cache_path()) as fh:
+            return json.load(fh)
+
+    def make_full_world(self, saves, name, extra_files=None, stats_rows=None, manifest=None):
+        files = {
+            "manifest.json": json.dumps(manifest or {
+                "version": 5, "tick_count": 2,
+                "confs": {"seed": 42, "width": 10, "height": 10},
+                "agent_count": 3, "energy_cell_count": 5,
+            }),
+            "stats.bin": stats_bin(stats_rows or [(0, 4, 2, 100, 40, 60, 1, 2)]),
+        }
+        if extra_files:
+            files.update(extra_files)
+        return self.make_world(saves, name, files)
+
+    def test_cache_first_run_extracts_all_and_writes_cache(self):
+        saves = os.path.join(self._tmp, "saves")
+        os.makedirs(saves)
+        self.make_full_world(saves, "a")
+        self.make_full_world(saves, "b")
+        out, _err = run_extract_stdout(saves, self.out_dir())
+        self.assertIn("2 worlds (2 re-extracted, 0 cached)", out)
+        self.assertTrue(os.path.isfile(self.cache_path()))
+        cache = self.load_cache_json()
+        self.assertEqual(cache["cache_format"], extract.CACHE_FORMAT_VERSION)
+        self.assertEqual(len(cache["worlds"]), 2)
+        self.assertEqual(self.load_index()["count"], 2)
+
+    def test_cache_second_run_unchanged_reuses_files(self):
+        saves = os.path.join(self._tmp, "saves")
+        os.makedirs(saves)
+        d = self.make_full_world(saves, "world")
+        run_extract(saves, self.out_dir())
+        world_json = os.path.join(self.out_dir(), "worlds", "world.json")
+        with open(world_json, "rb") as fh:
+            content1 = fh.read()
+        mtime1 = os.stat(world_json).st_mtime_ns
+        time.sleep(0.02)
+        out2, _err = run_extract_stdout(saves, self.out_dir())
+        self.assertIn("1 worlds (0 re-extracted, 1 cached)", out2)
+        with open(world_json, "rb") as fh:
+            content2 = fh.read()
+        self.assertEqual(content1, content2)
+        self.assertEqual(os.stat(world_json).st_mtime_ns, mtime1)
+
+    def test_cache_index_identical_across_runs(self):
+        root_a = os.path.join(self._tmp, "a")
+        root_b = os.path.join(self._tmp, "b")
+        for root in (root_a, root_b):
+            self.make_full_world(root, "same")
+        run_extract([root_a, root_b], self.out_dir())
+        with open(os.path.join(self.out_dir(), "index.json")) as fh:
+            index1 = json.load(fh)
+        run_extract([root_a, root_b], self.out_dir())
+        with open(os.path.join(self.out_dir(), "index.json")) as fh:
+            index2 = json.load(fh)
+        self.assertEqual(index1, index2)
+        self.assertEqual([w["id"] for w in index2["worlds"]], ["same", "same_2"])
+
+    def test_cache_touch_stats_bin_re_extracts(self):
+        saves = os.path.join(self._tmp, "saves")
+        os.makedirs(saves)
+        self.make_full_world(saves, "w")
+        run_extract(saves, self.out_dir())
+        with open(os.path.join(saves, "w", "stats.bin"), "wb") as fh:
+            fh.write(stats_bin([(0, 9, 9, 999, 999, 999, 0, 0)]))
+        out2, _err = run_extract_stdout(saves, self.out_dir())
+        self.assertIn("1 worlds (1 re-extracted, 0 cached)", out2)
+        with open(os.path.join(self.out_dir(), "worlds", "w.json")) as fh:
+            world = json.load(fh)
+        self.assertEqual(world["series"]["agent_count"], [9])
+
+    def test_cache_add_settings_re_extracts(self):
+        saves = os.path.join(self._tmp, "saves")
+        os.makedirs(saves)
+        self.make_full_world(saves, "plain")
+        run_extract(saves, self.out_dir())
+        self.assertIsNone(self.load_index()["worlds"][0]["brain"]["kind"])
+        self.make_world(saves, "plain", {
+            "settings.json": json.dumps({"brain_kind": "random", "target_tick_rate": 10}),
+        })
+        out2, _err = run_extract_stdout(saves, self.out_dir())
+        self.assertIn("1 worlds (1 re-extracted, 0 cached)", out2)
+        w = self.load_index()["worlds"][0]
+        self.assertEqual(w["brain"]["kind"], "random")
+        self.assertEqual(w["settings"]["target_tick_rate"], 10)
+
+    def test_cache_delete_stats_bin_re_extracts(self):
+        saves = os.path.join(self._tmp, "saves")
+        os.makedirs(saves)
+        self.make_full_world(saves, "w")
+        run_extract(saves, self.out_dir())
+        self.assertIsNotNone(self.load_index()["worlds"][0]["file"])
+        os.remove(os.path.join(saves, "w", "stats.bin"))
+        out2, _err = run_extract_stdout(saves, self.out_dir())
+        self.assertIn("1 worlds (1 re-extracted, 0 cached)", out2)
+        w = self.load_index()["worlds"][0]
+        self.assertIn("no_data", w["flags"])
+        self.assertIsNone(w["file"])
+
+    def test_cache_no_cache_re_extracts(self):
+        saves = os.path.join(self._tmp, "saves")
+        os.makedirs(saves)
+        self.make_full_world(saves, "w")
+        run_extract(saves, self.out_dir())
+        world_json = os.path.join(self.out_dir(), "worlds", "w.json")
+        content1 = open(world_json, "rb").read()
+        time.sleep(0.02)
+        out2, _err = run_extract_stdout(saves, self.out_dir(), extra=["--no-cache"])
+        self.assertIn("1 worlds (1 re-extracted, 0 cached)", out2)
+        content2 = open(world_json, "rb").read()
+        self.assertEqual(content1, content2)
+        self.assertTrue(os.path.isfile(self.cache_path()))
+
+    def test_cache_obs_bin_change_does_not_invalidate(self):
+        saves = os.path.join(self._tmp, "saves")
+        os.makedirs(saves)
+        self.make_full_world(saves, "w", extra_files={"obs.bin": b"\xff"})
+        run_extract(saves, self.out_dir())
+        with open(os.path.join(saves, "w", "obs.bin"), "wb") as fh:
+            fh.write(b"\x00" * 1024)
+        out2, _err = run_extract_stdout(saves, self.out_dir())
+        self.assertIn("1 worlds (0 re-extracted, 1 cached)", out2)
+
+    def test_cache_prunes_stale_world(self):
+        saves = os.path.join(self._tmp, "saves")
+        os.makedirs(saves)
+        d = self.make_full_world(saves, "gone")
+        run_extract(saves, self.out_dir())
+        self.assertEqual(len(self.load_cache_json()["worlds"]), 1)
+        shutil.rmtree(d)
+        out2, _err = run_extract_stdout(saves, self.out_dir())
+        self.assertIn("0 worlds (0 re-extracted, 0 cached)", out2)
+        self.assertEqual(self.load_cache_json()["worlds"], {})
+        self.assertEqual(self.load_index()["count"], 0)
+
+    def test_cache_invalidated_when_code_changes(self):
+        saves = os.path.join(self._tmp, "saves")
+        os.makedirs(saves)
+        self.make_full_world(saves, "w")
+        run_extract(saves, self.out_dir())
+        with mock.patch.object(extract, "CACHE_FORMAT_VERSION", extract.CACHE_FORMAT_VERSION + 1):
+            out2, _err = run_extract_stdout(saves, self.out_dir())
+        self.assertIn("1 worlds (1 re-extracted, 0 cached)", out2)
 
 
 if __name__ == "__main__":

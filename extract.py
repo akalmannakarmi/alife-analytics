@@ -15,6 +15,10 @@ STATS_FORMAT = struct.Struct("<QIIQQQII")
 ACTION_REC = struct.Struct("<QI")
 ACTION_TAIL = struct.Struct("<IB")
 
+CACHE_FORMAT_VERSION = 1
+WORLD_FILES = ("manifest.json", "settings.json", "stats.bin", "actions.bin")
+CACHE_META_KEYS = ("name", "source", "dir", "brain", "settings", "config", "final", "series_length", "flags")
+
 
 def warn(msg):
     print(f"extract: {msg}", file=sys.stderr)
@@ -250,6 +254,54 @@ def write_world(out_dir, world_id, meta, series):
     return f"worlds/{world_id}.json"
 
 
+def file_mark(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return [0, 0]
+    return [st.st_size, st.st_mtime_ns]
+
+
+def fingerprint_world(world_dir):
+    return [file_mark(os.path.join(world_dir, f)) for f in WORLD_FILES]
+
+
+def fingerprint_self():
+    return file_mark(os.path.abspath(__file__))
+
+
+def load_cache(path):
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if raw.get("cache_format") != CACHE_FORMAT_VERSION:
+        return {}
+    if raw.get("self_fingerprint") != fingerprint_self():
+        return {}
+    entries = raw.get("worlds")
+    if not isinstance(entries, dict):
+        return {}
+    return entries
+
+
+def make_cache(path, entries):
+    return {
+        "cache_format": CACHE_FORMAT_VERSION,
+        "self_fingerprint": fingerprint_self(),
+        "worlds": entries,
+    }
+
+
+def save_cache(path, entries):
+    payload = make_cache(path, entries)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, separators=(",", ":"))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="extract",
@@ -267,16 +319,28 @@ def main(argv=None):
         metavar="DIR",
         help="output directory (default: analytics)",
     )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="ignore the extraction cache and re-extract every world (cache is still refreshed)",
+    )
     args = parser.parse_args(argv)
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     if args.saves:
         roots = [os.path.normpath(os.path.join(os.getcwd(), r)) for r in args.saves]
     else:
-        roots = [
-            os.path.normpath(os.path.join(script_dir, "..", "runtime", "saves")),
-            os.path.normpath(os.path.join(script_dir, "..", "alife-data-collector", "runtime-collector")),
-        ]
+        alife_dir = os.environ.get("ALIFE_DIR")
+        if alife_dir:
+            roots = [
+                os.path.normpath(os.path.join(alife_dir, "saves")),
+                os.path.normpath(os.path.join(alife_dir, "collector")),
+            ]
+        else:
+            roots = [
+                os.path.normpath(os.path.join(script_dir, "..", "runtime", "saves")),
+                os.path.normpath(os.path.join(script_dir, "..", "alife-data-collector", "runtime-collector")),
+            ]
 
     existing = []
     for root in roots:
@@ -297,34 +361,73 @@ def main(argv=None):
     worlds_dir = os.path.join(out_dir, "worlds")
     os.makedirs(worlds_dir, exist_ok=True)
 
+    cache_path = os.path.join(out_dir, ".extract-cache.json")
+    cache = {} if args.no_cache else load_cache(cache_path)
+    if cache is None:
+        cache = {}
+    fresh_cache = {}
+
     used_ids = {}
     index = []
     had_stats = 0
     skipped_data = 0
+    re_extracted = 0
+    cached_entries = 0
+    fresh_cache = {}
     for root, sub in found:
-        loaded = load_world(root, sub)
-        if loaded is None:
-            warn(f"skipping unreadable world dir: {os.path.join(root, sub)}")
-            continue
-        meta, series = loaded
-        base_id = sanitize(meta["name"])
-        used_ids[base_id] = used_ids.get(base_id, 0) + 1
-        world_id = base_id if used_ids[base_id] == 1 else f"{base_id}_{used_ids[base_id]}"
-        entry = dict(meta)
-        entry["id"] = world_id
-        if "no_data" not in entry["flags"]:
-            entry["file"] = write_world(out_dir, world_id, meta, series)
-            had_stats += 1
+        world_dir = os.path.normpath(os.path.join(root, sub))
+        fp = fingerprint_world(world_dir)
+        existing = cache.get(world_dir)
+        cached_valid = False
+        if existing is not None and existing.get("fingerprint") == fp:
+            f = existing.get("file")
+            if f is None or os.path.isfile(os.path.join(out_dir, f)):
+                meta = existing.get("meta")
+                if (isinstance(meta, dict)
+                        and meta.get("dir") == world_dir
+                        and all(k in meta for k in CACHE_META_KEYS)):
+                    cached_valid = True
+
+        if cached_valid:
+            entry = dict(existing["meta"])
+            cached_entries += 1
         else:
+            loaded = load_world(root, sub)
+            if loaded is None:
+                warn(f"skipping unreadable world dir: {world_dir}")
+                continue
+            meta, series = loaded
+            entry = dict(meta)
+            re_extracted += 1
+
+        base_id = sanitize(entry["name"])
+        used_ids[base_id] = used_ids.get(base_id, 0) + 1
+        entry["id"] = base_id if used_ids[base_id] == 1 else f"{base_id}_{used_ids[base_id]}"
+
+        if "no_data" in entry["flags"]:
             entry["file"] = None
             skipped_data += 1
+        else:
+            had_stats += 1
+            if cached_valid:
+                entry["file"] = existing.get("file")
+            else:
+                entry["file"] = write_world(out_dir, entry["id"], entry, series)
+
+        fresh_cache[world_dir] = {
+            "fingerprint": fp,
+            "meta": {k: entry[k] for k in CACHE_META_KEYS},
+            "file": entry["file"],
+        }
         index.append(entry)
+
+    save_cache(cache_path, fresh_cache)
 
     index_path = os.path.join(out_dir, "index.json")
     with open(index_path, "w", encoding="utf-8") as fh:
         json.dump({"count": len(index), "worlds": index}, fh, indent=1, separators=(",", ": "))
 
-    print(f"extract: {len(index)} worlds")
+    print(f"extract: {len(index)} worlds ({re_extracted} re-extracted, {cached_entries} cached)")
     print(f"extract: {had_stats} with timeseries, {skipped_data} without stats.bin (skipped)")
     print(f"extract: wrote {index_path}")
 
