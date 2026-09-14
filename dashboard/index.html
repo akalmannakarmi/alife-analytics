@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>alife-analytics</title>
+<link rel="stylesheet" href="style.css">
+<script src="vendor/uplot.min.js"></script>
+<link rel="stylesheet" href="vendor/uplot.min.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>alife&#8209;analytics</h1>
+  <span id="summary" class="summary"></span>
+  <span class="spacer"></span>
+  <span id="data-root" class="data-root"></span>
+</header>
+<div class="layout">
+  <aside class="panel">
+    <div class="panel-head">
+      <h2>Worlds</h2>
+      <div class="panel-actions">
+        <button id="select-all" type="button" title="Select all chartable worlds">All</button>
+        <button id="select-none" type="button" title="Clear selection">None</button>
+      </div>
+    </div>
+    <input id="world-search" class="world-search" type="search" placeholder="Filter worlds / brains\u2026" autocomplete="off">
+    <ul id="world-list" class="world-list"></ul>
+  </aside>
+  <main class="content">
+    <div class="toolbar">
+      <div id="metric-bar" class="metric-bar"></div>
+      <div id="chart-opts" class="chart-opts">
+        <label class="opt">X ticks
+          <input id="x-ticks" type="range" min="2" max="20" step="1" value="7">
+          <output id="x-ticks-out">7</output>
+        </label>
+        <label class="opt"><input id="y-zero" type="checkbox"> Y from 0</label>
+        <label class="opt"><input id="points" type="checkbox"> Points</label>
+        <div class="opt range-opt">
+          <label for="range-lo-in">Range</label>
+          <input id="range-lo-in" class="range-num" type="text" inputmode="numeric" pattern="[0-9]*" value="0" title="Min tick">
+          <div class="range-pair">
+            <input id="range-min" type="range" min="0" max="1" step="1" value="0">
+            <input id="range-max" type="range" min="0" max="1" step="1" value="1">
+          </div>
+          <input id="range-hi-in" class="range-num" type="text" inputmode="numeric" pattern="[0-9]*" value="0" title="Max tick">
+        </div>
+      </div>
+    </div>
+    <div id="charts" class="charts"></div>
+    <div id="empty-hint" class="empty-hint"></div>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
