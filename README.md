@@ -53,6 +53,59 @@ data lives somewhere else, override with a `data` query param:
 # http://localhost:8000/dashboard/?data=../analytics
 ```
 
+## Experiment runner
+
+`experiment.py` runs one-shot experiments: a matrix of brains x presets x seeds,
+each spawning the real headless `alife` binary into its own save dir under
+`../runtime/saves/<experiment>/`, then extracts and serves the dashboard over
+the results. Stdlib only; drives the real CLI flags (`--output-dir`,
+`--brain-kind`, `--cfg`, `--llm-*`, `--nn-path`, `--checkpoint-every`) — no
+invented flags.
+
+```sh
+python3 experiment.py run cfg.json            # run the matrix (parallel, capped)
+python3 experiment.py run cfg.json --dry-run  # print the constructed argv, spawn nothing
+python3 experiment.py chart <exp-dir>         # extract + serve the dashboard (port 8765)
+python3 experiment.py list                    # list save dirs under ../runtime/saves
+python3 experiment.py clean <name> --yes      # remove an experiment's save dir
+```
+
+`run` respects a `max_parallel` cap (default 3), writes a per-run `run.log` in
+each output dir and a `report.json` at the experiment root, exits non-zero if
+any run failed, and counts a child exit code 2 (brain keys exhausted) as a
+completed run (the world is still saved). Run lifecycle:
+
+```jsonc
+{
+  "name": "cost-sweep",                     // experiment dir name under the save root
+  "alife_binary": "../alife/zig-out/bin/alife",
+  "max_parallel": 3,
+  "seeds": [1, 2],
+  "defaults": { "ticks": 200, "width": 50, "height": 50,
+                "agents": 20, "energy_cells": 80 },
+  "brains": [
+    { "name": "random", "kind": "random" },
+    { "name": "nn-small", "kind": "neural_net", "nn_path": "weights.bin" },
+    { "name": "llm-sonnet", "kind": "llm",
+      "llm_endpoint": "http://127.0.0.1:8000/v1",
+      "llm_model": "sonnet5", "llm_api_key": "dummy" }
+  ],
+  "presets": [
+    { "name": "base",    "cfg": {} },
+    { "name": "spendy",  "cfg": { "move_cost_same_dir": 9, "emission_radius": 3 } }
+  ]
+}
+```
+
+- Run dirs: `<save-root>/<name>/<brain>-<preset>-s<seed>`. Save root defaults
+  to `../runtime/saves` (the extract default); override with `--saves-dir <dir>`.
+- Preset `cfg` entries become repeatable `--cfg field=val` args — the whitelisted
+  conf fields (movement cost / placement / emission + creation values).
+- Relative `nn_path` resolves against the config file's directory; absolute
+  paths pass through.
+- The save root can be overridden, but keep `chart`'s extract under the repo
+  root so the dashboard's default `../analytics` data path resolves.
+
 ## Test
 
 ```sh
