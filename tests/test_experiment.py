@@ -279,9 +279,10 @@ class ExperimentCliTests(unittest.TestCase):
             rc = 3 if name.endswith("B-baseline-s0") else 0
             return FakeProc(cmd, rc=rc)
 
-        runner = Runner("bin", 2, popen=maker, poll_interval=0)
-        specs = expand_matrix(cfg, Path(self.saves()))
-        outcomes, _ = runner.run(specs, Path(self._tmp))
+        with mock.patch.object(experiment, "logger"):
+            runner = Runner("bin", 2, popen=maker, poll_interval=0)
+            specs = expand_matrix(cfg, Path(self._tmp))
+            outcomes, _ = runner.run(specs, Path(self._tmp))
         ok, exhausted, failed = summarize(outcomes)
         self.assertEqual(ok, 1)
         self.assertEqual(failed, 1)
@@ -292,10 +293,11 @@ class ExperimentCliTests(unittest.TestCase):
         def maker(cmd, stdout=None, stderr=None, env=None, **kw):
             return FakeProc(cmd, rc=2)
 
-        runner = Runner("bin", 2, popen=maker, poll_interval=0)
-        cfg = load_config(make_cfg(self._tmp))
-        specs = expand_matrix(cfg, Path(self.saves()))
-        outcomes, _ = runner.run(specs, Path(self._tmp))
+        with mock.patch.object(experiment, "logger"):
+            runner = Runner("bin", 2, popen=maker, poll_interval=0)
+            cfg = load_config(make_cfg(self._tmp))
+            specs = expand_matrix(cfg, Path(self._tmp))
+            outcomes, _ = runner.run(specs, Path(self._tmp))
         o = outcomes[specs[0].name]
         self.assertTrue(o.exhausted)
         self.assertFalse(o.failed)
@@ -306,10 +308,11 @@ class ExperimentCliTests(unittest.TestCase):
         def maker(cmd, stdout=None, stderr=None, env=None, **kw):
             raise OSError("boom")
 
-        runner = Runner("bin", 2, popen=maker, poll_interval=0)
-        cfg = load_config(make_cfg(self._tmp))
-        specs = expand_matrix(cfg, Path(self.saves()))
-        outcomes, _ = runner.run(specs, Path(self._tmp))
+        with mock.patch.object(experiment, "logger"):
+            runner = Runner("bin", 2, popen=maker, poll_interval=0)
+            cfg = load_config(make_cfg(self._tmp))
+            specs = expand_matrix(cfg, Path(self._tmp))
+            outcomes, _ = runner.run(specs, Path(self._tmp))
         self.assertIsNotNone(outcomes[specs[0].name].error)
 
     # -- cmd_run --------------------------------------------------------------
@@ -355,7 +358,7 @@ class ExperimentCliTests(unittest.TestCase):
 
         with mock.patch.object(experiment, "Runner") as runner_cls:
             runner_cls.return_value.run = fake_run
-            with contextlib.redirect_stdout(io.StringIO()):
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 rc = cmd_run(path, dry_run=False, max_parallel=None,
                              saves_dir=self.saves(), binary=None)
         self.assertEqual(rc, RC_INTERRUPTED)
@@ -467,8 +470,8 @@ class ExperimentCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(main(["list", "--saves-dir", missing]), RC_FAILED)
             self.assertEqual(main(["clean", "x", "--saves-dir", missing]), RC_FAILED)
-        with self.assertRaises(SystemExit):
-            main([])
+            with self.assertRaises(SystemExit):
+                main([])
 
 
 if __name__ == "__main__":

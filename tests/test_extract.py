@@ -442,11 +442,13 @@ class ExtractTests(unittest.TestCase):
         self.make_full_world(saves, "w")
         run_extract(saves, self.out_dir())
         world_json = os.path.join(self.out_dir(), "worlds", "w.json")
-        content1 = open(world_json, "rb").read()
+        with open(world_json, "rb") as f:
+            content1 = f.read()
         time.sleep(0.02)
         out2, _err = run_extract_stdout(saves, self.out_dir(), extra=["--no-cache"])
         self.assertIn("1 worlds (1 re-extracted, 0 cached)", out2)
-        content2 = open(world_json, "rb").read()
+        with open(world_json, "rb") as f:
+            content2 = f.read()
         self.assertEqual(content1, content2)
         self.assertTrue(os.path.isfile(self.cache_path()))
 
