@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>alife-analytics</title>
+<script>
+try {
+  if (localStorage.getItem("alife-analytics-theme") === "light") {
+    document.documentElement.dataset.theme = "light";
+  }
+} catch (e) {}
+</script>
 <link rel="stylesheet" href="style.css">
 <script src="vendor/uplot.min.js"></script>
 <link rel="stylesheet" href="vendor/uplot.min.css">
@@ -14,6 +21,7 @@
   <span id="summary" class="summary"></span>
   <span class="spacer"></span>
   <span id="data-root" class="data-root"></span>
+  <button id="theme-toggle" class="theme-btn" type="button" title="Toggle light / dark theme"></button>
 </header>
 <div class="layout">
   <aside class="panel">

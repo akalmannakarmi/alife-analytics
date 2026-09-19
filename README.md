@@ -74,6 +74,10 @@ data lives somewhere else, override with a `data` query param:
 # http://localhost:8000/dashboard/?data=../analytics
 ```
 
+The dashboard ships dark-only by default; use the Light/Dark button in the
+top bar to toggle, persisted in `localStorage`
+(`alife-analytics-theme`).
+
 ## Experiment runner
 
 `experiment.py` runs one-shot experiments: a matrix of brains x presets x seeds,

@@ -2,6 +2,26 @@
 
 const DATA_ROOT = new URLSearchParams(location.search).get("data") || "../analytics";
 const MAX_POINTS = 2000;
+const THEME_KEY = "alife-analytics-theme";
+
+function currentTheme() {
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
+function cssVar(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
+function switchTheme(theme) {
+  document.documentElement.dataset.theme = theme === "light" ? "light" : "dark";
+  try {
+    localStorage.setItem(THEME_KEY, currentTheme());
+  } catch (e) {}
+  const btn = document.getElementById("theme-toggle");
+  if (btn) btn.textContent = currentTheme() === "light" ? "Dark" : "Light";
+  rebuildCharts();
+}
 
 const WORLD_COLORS = [
   "#6bc9ff", "#4ecdc4", "#b983ff", "#ff6b6b", "#ffe66d",
@@ -291,19 +311,19 @@ function chartOpts(metricLabel, seriesCfg, xStep, minV) {
     },
     axes: [
       {
-        stroke: "#8b90a0",
-        grid: { stroke: "#20242f", width: 1 },
+        stroke: cssVar("--axis-stroke", "#8b90a0"),
+        grid: { stroke: cssVar("--grid-stroke", "#20242f"), width: 1 },
         size: 40,
-        ticks: { stroke: "#556077" },
+        ticks: { stroke: cssVar("--tick-stroke", "#556077") },
         font: "11px ui-monospace, monospace",
         incrs: [xStep],
         values: (u, ticks) => ticks.map(fmtTick),
       },
       {
-        stroke: "#8b90a0",
-        grid: { stroke: "#20242f", width: 1 },
+        stroke: cssVar("--axis-stroke", "#8b90a0"),
+        grid: { stroke: cssVar("--grid-stroke", "#20242f"), width: 1 },
         size: 52,
-        ticks: { stroke: "#556077" },
+        ticks: { stroke: cssVar("--tick-stroke", "#556077") },
         font: "11px ui-monospace, monospace",
       },
     ],
@@ -502,6 +522,11 @@ function rebuildCharts() {
 }
 
 function init() {
+  document.getElementById("theme-toggle").addEventListener("click", () => {
+    switchTheme(currentTheme() === "light" ? "dark" : "light");
+  });
+  document.getElementById("theme-toggle").textContent = currentTheme() === "light" ? "Dark" : "Light";
+
   document.getElementById("select-all").addEventListener("click", () => {
     for (const w of state.worlds.values()) {
       if (w.meta.series_length > 0 && w.meta.file) state.selected.add(w.meta.id);
